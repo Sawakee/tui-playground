@@ -52,24 +52,39 @@ cargo run
 
 依存は [ratatui](https://ratatui.rs/) 0.29 + [crossterm](https://docs.rs/crossterm) 0.28、Rust edition 2024。
 
-## 設計
+## 全体構成
 
-エフェクトはプラガブルな構成になっている。
+機能ごとにモジュールが分かれており、`main.rs` は外枠だけを持つ。
 
+```
+src/
+  main.rs       ← App（プロンプト）・画面遷移・main ループ
+  effects.rs    ← エフェクト機能の全部（エンジン + 画面）
+  commands/     ← プロンプトのコマンド（1コマンド1ファイル）
+```
+
+依存は一方向: `main` → `effects` / `commands`。`effects` は `App` に依存しない
+（キー処理の結果は `Nav` enum で返し、画面遷移の判断は `main` 側が行う）。
+
+## エフェクト（`src/effects.rs`）
+
+エフェクト機能はこのモジュールで完結する。
+
+- **`Effects`** … エフェクト画面のコントローラ。状態（選択中モード・位相）と
+  `handle_key()` / `render()` / `reset()` / `tick()` を持つ
 - **`Effect` トレイト** … `render(&self, canvas, ctx)` でキャンバスへ描く責務
 - **`Canvas`** … 文字セルの2次元バッファ。`set(x, y, ch, color)` で書き込み、最後に一括描画
 - **`Ctx`** … 中心座標・最大半径＋極座標変換 `polar()` / 距離計算 `radius_at()`
 - **`MODES` テーブル** … ラベルと `&dyn Effect` の対応表
 
-### 新しいエフェクトを追加する
+### 新しいエフェクトを追加する（すべて `effects.rs` 内で完結）
 
 1. `struct Foo;` を作り `impl Effect for Foo` に描画を書く
-2. `static FOO: Foo = Foo;` を足す
-3. `MODES` に `Mode { label: "Foo", effect: &FOO }` を1行追加
+2. `MODES` に `Mode { label: "Foo", effect: &Foo }` を1行追加
 
-メニュー項目数・選択行・中心座標・ヘルプはすべて `MODES` から自動算出されるので、
-他のコードを変更する必要はない。各エフェクトの速さ・半径・密度は、各 `impl` 内の
-定数（`RADIUS` / `SPOKES` / `FREQ` など）や共通の `PHASE_SPEED` で調整できる。
+メニュー項目数・選択行・中心座標・ヘルプはすべて `MODES` から自動算出される。
+各エフェクトの速さ・半径・密度は、各 `impl` 内の定数（`RADIUS` / `SPOKES` /
+`FREQ` など）や `PHASE_SPEED` で調整できる。
 
 ## コマンド（1コマンド1ファイル）
 
