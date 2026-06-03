@@ -8,6 +8,7 @@
 
 use std::{
     io,
+    process::Command,
     time::{Duration, Instant},
 };
 
@@ -16,7 +17,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
@@ -230,70 +231,305 @@ impl Effect for Ripple {
     }
 }
 
+// ─── 画面の状態 ──────────────────────────────────────────────
+// Claude Code のように、まずプロンプトで文字を入力する。
+// "effect" と打つとエフェクト画面へ、"!…" でシェル実行。
+enum Screen {
+    Prompt,
+    Effects,
+}
+
+// プロンプトで補完候補に出すコマンド一覧（ここに足すと補完に出る）。
+const COMMANDS: &[&str] = &["effect", "help", "clear", "quit"];
+
+// 出力履歴の保持上限（古い行は捨てる）。
+const MAX_OUTPUT: usize = 500;
+
 // ─── App 構造体 ───────────────────────────────────────────────
 struct App {
-    cursor: usize, // いま選択中のモード（MODES のインデックス）
-    phase: f64,    // 共通の位相（時間）
+    screen: Screen,
+    input: String,        // プロンプトの入力中文字列
+    output: Vec<String>,  // 画面に出す履歴（投稿コマンドやシェル出力）
+    sugg_idx: usize,      // 補完候補のうち選択中のインデックス
+    cursor: usize,        // エフェクト画面で選択中のモード
+    phase: f64,           // 共通の位相（時間）。アニメとカーソル点滅に使う
     quitting: bool,
 }
 
 impl App {
     fn new() -> Self {
         Self {
+            screen: Screen::Prompt,
+            input: String::new(),
+            output: vec![
+                "tui-playground 🌊".to_string(),
+                "'effect' でエフェクト / '!<cmd>' でシェル / 'help' でヘルプ".to_string(),
+                String::new(),
+            ],
+            sugg_idx: 0,
             cursor: 0,
             phase: 0.0,
             quitting: false,
         }
     }
 
-    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        match code {
-            KeyCode::Char('q') | KeyCode::Esc => self.quitting = true,
-            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.quitting = true;
-            }
-
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                    self.on_cursor_moved();
-                }
-            }
-
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.cursor < MODES.len().saturating_sub(1) {
-                    self.cursor += 1;
-                    self.on_cursor_moved();
-                }
-            }
-
-            _ => {}
-        }
-    }
-
-    // カーソルが動いたら位相を 0 に戻し、選択先のエフェクトを最初から再生する
-    // （波紋なら中心から生まれ直す）。
-    fn on_cursor_moved(&mut self) {
-        self.phase = 0.0;
-    }
-
     fn update(&mut self) {
         self.phase += PHASE_SPEED;
     }
 
-    // ─── 描画 ────────────────────────────────────────────────
+    // ─── キー処理（画面ごとに振り分け）────────────────────────
+    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+        // Ctrl-C はどの画面でも終了。
+        if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+            self.quitting = true;
+            return;
+        }
+        match self.screen {
+            Screen::Prompt => self.handle_prompt_key(code),
+            Screen::Effects => self.handle_effects_key(code),
+        }
+    }
+
+    fn handle_prompt_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => self.quitting = true,
+            KeyCode::Enter => self.submit(),
+            KeyCode::Backspace => {
+                self.input.pop();
+                self.sugg_idx = 0;
+            }
+            // Tab: 補完候補を入力に採用する。
+            KeyCode::Tab => {
+                let matches = self.matches();
+                if let Some(m) = matches.get(self.sugg_idx).or(matches.first()) {
+                    self.input = m.to_string();
+                    self.sugg_idx = 0;
+                }
+            }
+            // 上下で補完候補を選ぶ。
+            KeyCode::Up => {
+                if self.sugg_idx > 0 {
+                    self.sugg_idx -= 1;
+                }
+            }
+            KeyCode::Down => {
+                let n = self.matches().len();
+                if n > 0 && self.sugg_idx + 1 < n {
+                    self.sugg_idx += 1;
+                }
+            }
+            // 印字可能な文字を入力へ（スペースも可＝"!ls -la" のため）。
+            KeyCode::Char(c) => {
+                self.input.push(c);
+                self.sugg_idx = 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_effects_key(&mut self, code: KeyCode) {
+        match code {
+            // プロンプトへ戻る。
+            KeyCode::Esc => {
+                self.screen = Screen::Prompt;
+            }
+            KeyCode::Char('q') => self.quitting = true,
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.cursor > 0 {
+                    self.cursor -= 1;
+                    self.phase = 0.0; // 選択先のエフェクトを最初から再生
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.cursor < MODES.len().saturating_sub(1) {
+                    self.cursor += 1;
+                    self.phase = 0.0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // いまの入力にマッチする補完候補。"!" で始まる入力（シェル）は補完しない。
+    fn matches(&self) -> Vec<&'static str> {
+        let inp = self.input.trim();
+        if inp.is_empty() || inp.starts_with('!') {
+            return Vec::new();
+        }
+        let ms: Vec<&'static str> = COMMANDS
+            .iter()
+            .filter(|c| c.starts_with(inp))
+            .copied()
+            .collect();
+        // 入力とぴったり一致する1件だけなら、候補表示は不要。
+        if ms.len() == 1 && ms[0] == inp {
+            return Vec::new();
+        }
+        ms
+    }
+
+    // 入力を確定して実行する。
+    fn submit(&mut self) {
+        let line = self.input.trim().to_string();
+        self.input.clear();
+        self.sugg_idx = 0;
+        if line.is_empty() {
+            return;
+        }
+        self.push_output(format!("> {line}"));
+
+        if let Some(cmd) = line.strip_prefix('!') {
+            self.run_shell(cmd.trim());
+        } else {
+            match line.as_str() {
+                "effect" | "effects" => {
+                    self.screen = Screen::Effects;
+                    self.cursor = 0;
+                    self.phase = 0.0;
+                }
+                "clear" => self.output.clear(),
+                "help" => {
+                    self.push_output("  effect    エフェクト画面を開く".to_string());
+                    self.push_output("  !<cmd>    シェルコマンドを実行（例: !ls -la）".to_string());
+                    self.push_output("  clear     出力を消去".to_string());
+                    self.push_output("  quit      終了（Esc でも可）".to_string());
+                    self.push_output("  Tab       補完 / ↑↓ で候補選択".to_string());
+                }
+                "quit" | "exit" => self.quitting = true,
+                other => {
+                    self.push_output(format!(
+                        "unknown command: {other}  ('effect' / 'help' / '!<cmd>')"
+                    ));
+                }
+            }
+        }
+    }
+
+    // シェルを実行して標準出力・標準エラーを履歴へ取り込む。
+    fn run_shell(&mut self, cmd: &str) {
+        if cmd.is_empty() {
+            return;
+        }
+        match Command::new("sh").arg("-c").arg(cmd).output() {
+            Ok(out) => {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    self.push_output(line.to_string());
+                }
+                for line in String::from_utf8_lossy(&out.stderr).lines() {
+                    self.push_output(line.to_string());
+                }
+                if !out.status.success() {
+                    self.push_output(format!("[exit: {}]", out.status.code().unwrap_or(-1)));
+                }
+            }
+            Err(e) => self.push_output(format!("[error] {e}")),
+        }
+    }
+
+    // 履歴へ1行追加し、上限を超えたら古い行を捨てる。
+    fn push_output(&mut self, line: String) {
+        self.output.push(line);
+        let overflow = self.output.len().saturating_sub(MAX_OUTPUT);
+        if overflow > 0 {
+            self.output.drain(0..overflow);
+        }
+    }
+
+    // ─── 描画（画面ごとに振り分け）────────────────────────────
     fn render(&mut self, frame: &mut Frame) {
+        match self.screen {
+            Screen::Prompt => self.render_prompt(frame),
+            Screen::Effects => self.render_effects(frame),
+        }
+    }
+
+    // プロンプト画面: 上に履歴、下に入力行、入力の上に補完候補。
+    fn render_prompt(&self, frame: &mut Frame) {
+        let area = frame.area();
+        let w = area.width;
+        let h = area.height;
+        if w == 0 || h < 2 {
+            return;
+        }
+
+        // 入力行＝下から2行目、ヘルプ＝最下行、それより上が履歴。
+        let input_y = h - 2;
+        let body_h = input_y; // 0..input_y が履歴領域
+
+        // 履歴（末尾を優先して表示）
+        let start = self.output.len().saturating_sub(body_h as usize);
+        let text = self.output[start..].join("\n");
+        frame.render_widget(
+            Paragraph::new(text)
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(Color::Gray)),
+            Rect::new(0, 0, w, body_h),
+        );
+
+        // 入力行（点滅カーソル付き）
+        let blink = (self.phase * 0.6).sin() > -0.2; // ほぼ点灯、ときどき消える
+        let caret = if blink { "█" } else { " " };
+        let prompt = Span::styled("❯ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        let typed = Span::styled(self.input.clone(), Style::default().fg(Color::White));
+        let cur = Span::styled(caret, Style::default().fg(Color::Cyan));
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![prompt, typed, cur])),
+            Rect::new(0, input_y, w, 1),
+        );
+
+        // ヘルプ行
+        frame.render_widget(
+            Paragraph::new("Enter 実行   Tab 補完   ↑↓ 候補   !<cmd> シェル   Esc 終了")
+                .style(Style::default().fg(Color::DarkGray)),
+            Rect::new(0, h - 1, w, 1),
+        );
+
+        // 補完候補ポップアップ（入力行の真上に重ねる）
+        let matches = self.matches();
+        if !matches.is_empty() {
+            let n = matches.len().min(6) as u16;
+            let top = input_y.saturating_sub(n);
+            let pop_w = matches
+                .iter()
+                .map(|m| m.len())
+                .max()
+                .unwrap_or(0) as u16
+                + 4;
+            let pop_w = pop_w.min(w.saturating_sub(2)).max(1);
+
+            let lines: Vec<Line> = matches
+                .iter()
+                .take(n as usize)
+                .enumerate()
+                .map(|(i, m)| {
+                    let selected = i == self.sugg_idx;
+                    // 幅いっぱいに背景色を敷くため空白で埋める。
+                    let label = format!(" {:<width$}", m, width = (pop_w as usize).saturating_sub(1));
+                    let style = if selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .bg(Color::Rgb(40, 70, 130))
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray).bg(Color::Rgb(22, 27, 38))
+                    };
+                    Line::from(Span::styled(label, style))
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(lines), Rect::new(2, top, pop_w, n));
+        }
+    }
+
+    // エフェクト画面（旧メニュー）。
+    fn render_effects(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let w = area.width;
         let h = area.height;
 
-        // メニューを画面中央へ寄せる。行数 = タイトル(1) + 空行(1) + 項目数。
         let menu_h = MODES.len() as u16 + 2;
         let menu_top = h.saturating_sub(menu_h) / 2;
-        // タイトル(0) 空行(1) を挟んで項目が並ぶので、選択行 = menu_top + 2 + cursor。
         let center_row = menu_top + 2 + self.cursor as u16;
 
-        // 背景にエフェクトを描く（選択中のモードに対応するもの）。
         if w > 0 && h > 0 {
             let mut canvas = Canvas::new(w as usize, h as usize);
             let ctx = self.make_ctx(w, h, center_row);
@@ -301,11 +537,9 @@ impl App {
             frame.render_widget(Paragraph::new(canvas.into_lines()), area);
         }
 
-        // メニュー（エフェクトの上に重ねて描く）
         self.render_menu(frame, Rect::new(0, menu_top, w, menu_h));
 
-        // ヘルプ行（最下行）
-        let help = Paragraph::new("↑↓ / k j: 移動    q / Esc: 終了")
+        let help = Paragraph::new("↑↓ / k j: 移動    Esc: 戻る    q: 終了")
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(help, Rect::new(0, h.saturating_sub(1), w, 1));
