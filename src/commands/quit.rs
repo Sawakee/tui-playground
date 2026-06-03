@@ -14,6 +14,6 @@ impl Command for Cmd {
     }
 
     fn run(&self, app: &mut App) {
-        app.quitting = true;
+        app.quit();
     }
 }

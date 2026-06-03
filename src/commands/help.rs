@@ -15,11 +15,12 @@ impl Command for Cmd {
     }
 
     fn run(&self, app: &mut App) {
+        let row = |name: &str, help: &str| format!("  {name:<8}{help}");
         for c in REGISTRY {
-            app.push_output(format!("  {:<8}{}", c.name(), c.help()));
+            app.push_output(row(c.name(), c.help()));
         }
         // コマンドではない使い方も併記。
-        app.push_output(format!("  {:<8}{}", "!<cmd>", "シェルを実行（例: !ls -la）"));
-        app.push_output(format!("  {:<8}{}", "Tab", "補完 / ↑↓ で候補選択"));
+        app.push_output(row("!<cmd>", "シェルを実行（例: !ls -la）"));
+        app.push_output(row("Tab", "補完 / ↑↓ で候補選択"));
     }
 }

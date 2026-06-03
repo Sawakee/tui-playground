@@ -90,7 +90,8 @@ src/commands/
 ### 新しいコマンドを追加する
 
 1. `src/commands/foo.rs` を作り、`pub struct Cmd;` に `impl Command` を書く
-2. `mod.rs` に `mod foo;`、`static FOO: foo::Cmd = foo::Cmd;`、`REGISTRY` へ `&FOO` を1行追加
+2. `mod.rs` に `mod foo;` と `REGISTRY` へ `&foo::Cmd` を1行追加
 
-`run()` には `&mut App` が渡るので、画面遷移・出力・終了などを自由に行える。
+`run()` には `&mut App` が渡る。画面遷移・出力・終了などは App の操作 API
+（`open_effects()` / `clear_output()` / `quit()` / `push_output()`）を呼ぶ。
 補完候補も `help` の一覧も `REGISTRY` から自動生成されるため、追加漏れでズレない。

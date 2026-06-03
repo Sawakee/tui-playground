@@ -1,7 +1,7 @@
 // プロンプトのコマンド群。「1コマンド1ファイル」でこのディレクトリに置く。
 // 新しいコマンドを足す手順:
 //   1. commands/foo.rs を作り `pub struct Cmd;` に `impl Command` を書く
-//   2. 下に `mod foo;` と REGISTRY への1行を足す
+//   2. 下に `mod foo;` と REGISTRY への `&foo::Cmd` を足す
 // これだけで補完・ヘルプ・実行のすべてに反映される（単一の真実）。
 
 use crate::App;
@@ -19,11 +19,6 @@ pub trait Command {
     fn run(&self, app: &mut App); // 実行本体（App を書き換える）
 }
 
-// 各コマンドの static 実体（状態を持たないゼロサイズ型）。
-static EFFECT: effect::Cmd = effect::Cmd;
-static HELP: help::Cmd = help::Cmd;
-static CLEAR: clear::Cmd = clear::Cmd;
-static QUIT: quit::Cmd = quit::Cmd;
-
 // 登録済みコマンド一覧。並び順が補完・ヘルプの表示順になる。
-pub const REGISTRY: &[&dyn Command] = &[&EFFECT, &HELP, &CLEAR, &QUIT];
+// 各コマンドは状態を持たないゼロサイズ型なので、参照を直接並べればよい。
+pub const REGISTRY: &[&dyn Command] = &[&effect::Cmd, &help::Cmd, &clear::Cmd, &quit::Cmd];

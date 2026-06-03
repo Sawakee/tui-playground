@@ -1,6 +1,6 @@
 // effect: エフェクト画面を開く。
 use super::Command;
-use crate::{App, Screen};
+use crate::App;
 
 pub struct Cmd;
 
@@ -14,8 +14,6 @@ impl Command for Cmd {
     }
 
     fn run(&self, app: &mut App) {
-        app.screen = Screen::Effects;
-        app.cursor = 0;
-        app.phase = 0.0; // 選択中のエフェクトを最初から再生
+        app.open_effects();
     }
 }

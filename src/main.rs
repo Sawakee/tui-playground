@@ -420,6 +420,24 @@ impl App {
         }
     }
 
+    // ─── コマンド向けの操作 API（commands/* から呼ばれる）───────
+    // コマンドは「何をしたいか」だけを呼び、フィールドの動かし方は App が持つ。
+
+    // エフェクト画面を開く（カーソルと位相を初期化して最初から再生）。
+    fn open_effects(&mut self) {
+        self.screen = Screen::Effects;
+        self.cursor = 0;
+        self.phase = 0.0;
+    }
+
+    fn clear_output(&mut self) {
+        self.output.clear();
+    }
+
+    fn quit(&mut self) {
+        self.quitting = true;
+    }
+
     // シェルを実行して標準出力・標準エラーを履歴へ取り込む。
     fn run_shell(&mut self, cmd: &str) {
         if cmd.is_empty() {

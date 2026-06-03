@@ -14,6 +14,6 @@ impl Command for Cmd {
     }
 
     fn run(&self, app: &mut App) {
-        app.output.clear();
+        app.clear_output();
     }
 }
