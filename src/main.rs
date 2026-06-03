@@ -350,11 +350,16 @@ impl App {
         }
     }
 
-    // いまの入力にマッチする補完候補。"!" で始まる入力（シェル）は補完しない。
+    // いまの入力にマッチする補完候補。
+    // "!" 始まりはシェルモードなのでコマンド補完はしない。
+    // 空入力のときは全コマンドを候補に出す（デフォルトで一覧が見える）。
     fn matches(&self) -> Vec<&'static str> {
         let inp = self.input.trim();
-        if inp.is_empty() || inp.starts_with('!') {
+        if inp.starts_with('!') {
             return Vec::new();
+        }
+        if inp.is_empty() {
+            return COMMANDS.to_vec();
         }
         let ms: Vec<&'static str> = COMMANDS
             .iter()
@@ -366,6 +371,11 @@ impl App {
             return Vec::new();
         }
         ms
+    }
+
+    // "!" で始まっていればシェルモード。
+    fn is_shell_mode(&self) -> bool {
+        self.input.starts_with('!')
     }
 
     // 入力を確定して実行する。
@@ -466,16 +476,34 @@ impl App {
             Rect::new(0, 0, w, body_h),
         );
 
-        // 入力行（点滅カーソル付き）
+        // 入力行（点滅カーソル付き）。シェルモードでは見た目を変える。
+        let shell = self.is_shell_mode();
         let blink = (self.phase * 0.6).sin() > -0.2; // ほぼ点灯、ときどき消える
         let caret = if blink { "█" } else { " " };
-        let prompt = Span::styled("❯ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
-        let typed = Span::styled(self.input.clone(), Style::default().fg(Color::White));
-        let cur = Span::styled(caret, Style::default().fg(Color::Cyan));
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![prompt, typed, cur])),
-            Rect::new(0, input_y, w, 1),
-        );
+        let accent = if shell { Color::Yellow } else { Color::Cyan };
+        let mut spans: Vec<Span> = Vec::new();
+        if shell {
+            // 黄色いバッジでシェルモードであることを明示。
+            spans.push(Span::styled(
+                " SHELL ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
+            // "!" を除いた中身を黄色で表示。
+            let body = self.input.strip_prefix('!').unwrap_or(&self.input);
+            spans.push(Span::styled(body.to_string(), Style::default().fg(Color::Yellow)));
+        } else {
+            spans.push(Span::styled(
+                "❯ ",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(self.input.clone(), Style::default().fg(Color::White)));
+        }
+        spans.push(Span::styled(caret, Style::default().fg(accent)));
+        frame.render_widget(Paragraph::new(Line::from(spans)), Rect::new(0, input_y, w, 1));
 
         // ヘルプ行
         frame.render_widget(
@@ -483,6 +511,20 @@ impl App {
                 .style(Style::default().fg(Color::DarkGray)),
             Rect::new(0, h - 1, w, 1),
         );
+
+        // シェルモードのときは、補完の代わりに説明を入力行の真上に出す。
+        if shell {
+            let hint = Line::from(Span::styled(
+                " sh -c で実行します（例: !ls -la） ",
+                Style::default().fg(Color::Yellow).bg(Color::Rgb(50, 45, 12)),
+            ));
+            let hw = (hint.width() as u16).min(w.saturating_sub(2)).max(1);
+            frame.render_widget(
+                Paragraph::new(hint),
+                Rect::new(2, input_y.saturating_sub(1), hw, 1),
+            );
+            return;
+        }
 
         // 補完候補ポップアップ（入力行の真上に重ねる）
         let matches = self.matches();
