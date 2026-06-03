@@ -8,7 +8,7 @@
 
 use std::{
     io,
-    process::Command,
+    process,
     time::{Duration, Instant},
 };
 
@@ -20,6 +20,8 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
     Frame,
 };
+
+mod commands;
 
 // ─── 定数 ────────────────────────────────────────────────────
 const FPS: u64 = 30;
@@ -248,20 +250,8 @@ const MAX_OUTPUT: usize = 500;
 // 補完ポップアップに一度に出す候補の最大数。
 const MAX_SUGGESTIONS: usize = 6;
 
-// プロンプトのコマンド定義。MODES と同じく、ここに1行足すだけで
-// 補完・ヘルプ・実行のすべてに反映される（コマンドの単一の真実）。
-struct CmdSpec {
-    name: &'static str,
-    help: &'static str,
-    run: fn(&mut App),
-}
-
-const COMMANDS: &[CmdSpec] = &[
-    CmdSpec { name: "effect", help: "エフェクト画面を開く", run: App::cmd_effect },
-    CmdSpec { name: "help", help: "コマンド一覧を表示", run: App::cmd_help },
-    CmdSpec { name: "clear", help: "出力を消去", run: App::cmd_clear },
-    CmdSpec { name: "quit", help: "終了（Esc でも可）", run: App::cmd_quit },
-];
+// コマンドは commands/ 以下に「1コマンド1ファイル」で定義する。
+// commands::REGISTRY が登録済み一覧（補完・ヘルプ・実行の単一の真実）。
 
 // ─── App 構造体 ───────────────────────────────────────────────
 struct App {
@@ -376,11 +366,11 @@ impl App {
         }
         let inp = self.input.trim();
         if inp.is_empty() {
-            return COMMANDS.iter().map(|c| c.name).collect();
+            return commands::REGISTRY.iter().map(|c| c.name()).collect();
         }
-        let ms: Vec<&'static str> = COMMANDS
+        let ms: Vec<&'static str> = commands::REGISTRY
             .iter()
-            .map(|c| c.name)
+            .map(|c| c.name())
             .filter(|name| name.starts_with(inp))
             .collect();
         // 入力とぴったり一致する1件だけなら、候補表示は不要。
@@ -423,34 +413,11 @@ impl App {
             self.run_shell(cmd.trim());
             return;
         }
-        // コマンド表から探して実行。無ければ unknown。
-        match COMMANDS.iter().find(|c| c.name == line) {
-            Some(cmd) => (cmd.run)(self),
+        // レジストリから探して実行。無ければ unknown。
+        match commands::REGISTRY.iter().find(|c| c.name() == line) {
+            Some(cmd) => cmd.run(self),
             None => self.push_output(format!("unknown command: {line}  ('help' でコマンド一覧)")),
         }
-    }
-
-    // ─── コマンドの実体（COMMANDS テーブルから呼ばれる）──────────
-    fn cmd_effect(&mut self) {
-        self.screen = Screen::Effects;
-        self.cursor = 0;
-        self.phase = 0.0;
-    }
-
-    fn cmd_clear(&mut self) {
-        self.output.clear();
-    }
-
-    fn cmd_quit(&mut self) {
-        self.quitting = true;
-    }
-
-    fn cmd_help(&mut self) {
-        for c in COMMANDS {
-            self.push_output(format!("  {:<8}{}", c.name, c.help));
-        }
-        self.push_output(format!("  {:<8}{}", "!<cmd>", "シェルを実行（例: !ls -la）"));
-        self.push_output(format!("  {:<8}{}", "Tab", "補完 / ↑↓ で候補選択"));
     }
 
     // シェルを実行して標準出力・標準エラーを履歴へ取り込む。
@@ -458,7 +425,7 @@ impl App {
         if cmd.is_empty() {
             return;
         }
-        match Command::new("sh").arg("-c").arg(cmd).output() {
+        match process::Command::new("sh").arg("-c").arg(cmd).output() {
             Ok(out) => {
                 for line in String::from_utf8_lossy(&out.stdout).lines() {
                     self.push_output(line.to_string());

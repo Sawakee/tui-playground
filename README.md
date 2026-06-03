@@ -70,3 +70,27 @@ cargo run
 メニュー項目数・選択行・中心座標・ヘルプはすべて `MODES` から自動算出されるので、
 他のコードを変更する必要はない。各エフェクトの速さ・半径・密度は、各 `impl` 内の
 定数（`RADIUS` / `SPOKES` / `FREQ` など）や共通の `PHASE_SPEED` で調整できる。
+
+## コマンド（1コマンド1ファイル）
+
+プロンプトのコマンドは `src/commands/` 以下に**1コマンド1ファイル**で置く。
+
+```
+src/commands/
+  mod.rs      ← Command トレイト + REGISTRY
+  effect.rs   ← pub struct Cmd; impl Command
+  help.rs
+  clear.rs
+  quit.rs
+```
+
+- **`Command` トレイト** … `name()` / `help()` / `run(&self, app)` の3つ（エフェクトの `Effect` トレイトと同じ発想）
+- **`REGISTRY`** … `&[&dyn Command]`。補完・ヘルプ・実行すべての単一の真実
+
+### 新しいコマンドを追加する
+
+1. `src/commands/foo.rs` を作り、`pub struct Cmd;` に `impl Command` を書く
+2. `mod.rs` に `mod foo;`、`static FOO: foo::Cmd = foo::Cmd;`、`REGISTRY` へ `&FOO` を1行追加
+
+`run()` には `&mut App` が渡るので、画面遷移・出力・終了などを自由に行える。
+補完候補も `help` の一覧も `REGISTRY` から自動生成されるため、追加漏れでズレない。
