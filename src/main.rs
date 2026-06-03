@@ -293,18 +293,20 @@ impl App {
     fn handle_prompt_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Esc => self.quitting = true,
-            KeyCode::Enter => self.submit(),
+            // Enter: 補完候補が出ていればまず選択中の候補を入力に採用し、
+            // 候補がなければ（＝確定済み or シェル）実行する。
+            KeyCode::Enter => {
+                if !self.accept_suggestion() {
+                    self.submit();
+                }
+            }
             KeyCode::Backspace => {
                 self.input.pop();
                 self.sugg_idx = 0;
             }
             // Tab: 補完候補を入力に採用する。
             KeyCode::Tab => {
-                let matches = self.matches();
-                if let Some(m) = matches.get(self.sugg_idx).or(matches.first()) {
-                    self.input = m.to_string();
-                    self.sugg_idx = 0;
-                }
+                self.accept_suggestion();
             }
             // 上下で補完候補を選ぶ。
             KeyCode::Up => {
@@ -376,6 +378,23 @@ impl App {
     // "!" で始まっていればシェルモード。
     fn is_shell_mode(&self) -> bool {
         self.input.starts_with('!')
+    }
+
+    // 選択中の補完候補を入力欄に採用する。採用したら true。
+    // 候補が無い（確定済み or シェルモード）なら false。
+    fn accept_suggestion(&mut self) -> bool {
+        let matches = self.matches();
+        let pick = matches
+            .get(self.sugg_idx)
+            .or_else(|| matches.first())
+            .copied();
+        if let Some(cmd) = pick {
+            self.input = cmd.to_string();
+            self.sugg_idx = 0;
+            true
+        } else {
+            false
+        }
     }
 
     // 入力を確定して実行する。
@@ -507,7 +526,7 @@ impl App {
 
         // ヘルプ行
         frame.render_widget(
-            Paragraph::new("Enter 実行   Tab 補完   ↑↓ 候補   !<cmd> シェル   Esc 終了")
+            Paragraph::new("Enter 採用/実行   Tab 補完   ↑↓ 候補   !<cmd> シェル   Esc 終了")
                 .style(Style::default().fg(Color::DarkGray)),
             Rect::new(0, h - 1, w, 1),
         );
