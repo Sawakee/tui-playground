@@ -58,18 +58,20 @@ cargo run
 
 ```
 src/
-  main.rs       ← App（プロンプト）・画面遷移・main ループ
-  effects.rs    ← エフェクト機能の全部（エンジン + 画面）
-  commands/     ← プロンプトのコマンド（1コマンド1ファイル）
+  main.rs            ← App（プロンプト）・画面遷移・main ループ
+  commands/          ← プロンプトのコマンド（1コマンド1ファイル）
+    effect.rs        ← effect コマンド ＋ エフェクト機能の全部（エンジン + 画面）
+    help.rs / clear.rs / quit.rs / mod.rs
 ```
 
-依存は一方向: `main` → `effects` / `commands`。`effects` は `App` に依存しない
-（キー処理の結果は `Nav` enum で返し、画面遷移の判断は `main` 側が行う）。
+`main.rs` はエフェクトのロジックを持たず、`commands::effect::Effects` を保持して
+画面遷移だけを行う（キー処理の結果は `Nav` enum で受け取る）。
 
-## エフェクト（`src/effects.rs`）
+## エフェクト（`src/commands/effect.rs`）
 
-エフェクト機能はこのモジュールで完結する。
+effect コマンドとエフェクト機能は同じファイルにまとまっている。
 
+- **`Cmd`** … `effect` コマンド本体（`app.open_effects()` を呼ぶ）
 - **`Effects`** … エフェクト画面のコントローラ。状態（選択中モード・位相）と
   `handle_key()` / `render()` / `reset()` / `tick()` を持つ
 - **`Effect` トレイト** … `render(&self, canvas, ctx)` でキャンバスへ描く責務
@@ -77,7 +79,7 @@ src/
 - **`Ctx`** … 中心座標・最大半径＋極座標変換 `polar()` / 距離計算 `radius_at()`
 - **`MODES` テーブル** … ラベルと `&dyn Effect` の対応表
 
-### 新しいエフェクトを追加する（すべて `effects.rs` 内で完結）
+### 新しいエフェクトを追加する（すべて `commands/effect.rs` 内で完結）
 
 1. `struct Foo;` を作り `impl Effect for Foo` に描画を書く
 2. `MODES` に `Mode { label: "Foo", effect: &Foo }` を1行追加

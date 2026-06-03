@@ -21,7 +21,8 @@ use ratatui::{
 };
 
 mod commands;
-mod effects;
+// エフェクト機能は commands/effect.rs（effect コマンドと同じファイル）にある。
+use commands::effect;
 
 // ─── 定数 ────────────────────────────────────────────────────
 const FPS: u64 = 30;
@@ -54,8 +55,8 @@ struct App {
     input: String,            // プロンプトの入力中文字列
     output: Vec<String>,      // 画面に出す履歴（投稿コマンドやシェル出力）
     sugg_idx: usize,          // 補完候補のうち選択中のインデックス
-    phase: f64,               // プロンプトのカーソル点滅用の位相
-    effects: effects::Effects, // エフェクト画面（状態・描画はモジュール側）
+    phase: f64,              // プロンプトのカーソル点滅用の位相
+    effects: effect::Effects, // エフェクト画面（状態・描画は commands/effect.rs）
     quitting: bool,
 }
 
@@ -68,7 +69,7 @@ impl App {
             output: Vec::new(),
             sugg_idx: 0,
             phase: 0.0,
-            effects: effects::Effects::new(),
+            effects: effect::Effects::new(),
             quitting: false,
         }
     }
@@ -91,9 +92,9 @@ impl App {
             Screen::Prompt => self.handle_prompt_key(code),
             // エフェクト画面のキー処理はモジュールに委譲し、遷移だけ受け取る。
             Screen::Effects => match self.effects.handle_key(code) {
-                effects::Nav::Exit => self.screen = Screen::Prompt,
-                effects::Nav::Quit => self.quitting = true,
-                effects::Nav::Stay => {}
+                effect::Nav::Exit => self.screen = Screen::Prompt,
+                effect::Nav::Quit => self.quitting = true,
+                effect::Nav::Stay => {}
             },
         }
     }
