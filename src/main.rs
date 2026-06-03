@@ -261,11 +261,8 @@ impl App {
         Self {
             screen: Screen::Prompt,
             input: String::new(),
-            output: vec![
-                "tui-playground 🌊".to_string(),
-                "'effect' でエフェクト / '!<cmd>' でシェル / 'help' でヘルプ".to_string(),
-                String::new(),
-            ],
+            // 起動時の出力は空。使い方は help コマンドで見られる。
+            output: Vec::new(),
             sugg_idx: 0,
             cursor: 0,
             phase: 0.0,
