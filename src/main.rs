@@ -1,5 +1,5 @@
-// SuperThink ウェーブ TUI 🌊
-// 4つの「思考モード」をカーソルで選ぶメニュー。
+// ウェーブ TUI 🌊
+// 4つのエフェクトをカーソルで選ぶメニュー。
 // 選択中のモードごとに、選択した文字を中心とした別々の光のエフェクトを表示する。
 //
 // 設計はスケーラブル: 効果は Effect トレイトで表し、共通の Canvas へ描く。
@@ -39,14 +39,14 @@ struct Mode {
 
 static PULSE: Pulse = Pulse;
 static ORBIT: Orbit = Orbit;
-static RAYS: Rays = Rays;
+static STARBURST: Starburst = Starburst;
 static RIPPLE: Ripple = Ripple;
 
 const MODES: &[Mode] = &[
-    Mode { label: "Think", effect: &PULSE },
-    Mode { label: "Think hard", effect: &ORBIT },
-    Mode { label: "Think harder", effect: &RAYS },
-    Mode { label: "SuperThink", effect: &RIPPLE },
+    Mode { label: "Pulse", effect: &PULSE },
+    Mode { label: "Orbit", effect: &ORBIT },
+    Mode { label: "Starburst", effect: &STARBURST },
+    Mode { label: "Ripple", effect: &RIPPLE },
 ];
 
 // ─── Canvas: 文字セルの2次元バッファ ──────────────────────────
@@ -129,7 +129,7 @@ trait Effect {
     fn render(&self, canvas: &mut Canvas, ctx: &Ctx);
 }
 
-// ── Think: 中心でゆっくり明滅する光（呼吸） ──────────────────
+// ── Pulse: 中心でゆっくり明滅する光（呼吸） ──────────────────
 struct Pulse;
 impl Effect for Pulse {
     fn render(&self, canvas: &mut Canvas, ctx: &Ctx) {
@@ -152,7 +152,7 @@ impl Effect for Pulse {
     }
 }
 
-// ── Think hard: 中心を周回する光（コメット） ─────────────────
+// ── Orbit: 中心を周回する光（コメット） ─────────────────────
 struct Orbit;
 impl Effect for Orbit {
     fn render(&self, canvas: &mut Canvas, ctx: &Ctx) {
@@ -173,9 +173,9 @@ impl Effect for Orbit {
     }
 }
 
-// ── Think harder: 放射状に脈打つ光線（スターバースト） ────────
-struct Rays;
-impl Effect for Rays {
+// ── Starburst: 放射状に脈打つ光線（スターバースト） ──────────
+struct Starburst;
+impl Effect for Starburst {
     fn render(&self, canvas: &mut Canvas, ctx: &Ctx) {
         const SPOKES: usize = 16;
         let max_len = (ctx.max_r * 0.9).max(1.0);
@@ -198,7 +198,7 @@ impl Effect for Rays {
     }
 }
 
-// ── SuperThink: 中心から伝播する同心円の波紋 ──────────────────
+// ── Ripple: 中心から伝播する同心円の波紋 ─────────────────────
 struct Ripple;
 impl Effect for Ripple {
     fn render(&self, canvas: &mut Canvas, ctx: &Ctx) {
@@ -330,7 +330,7 @@ impl App {
         let mut lines: Vec<Line> = Vec::new();
 
         lines.push(Line::from(Span::styled(
-            "思考モードを選んでね",
+            "エフェクトを選んでね",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
