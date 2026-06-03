@@ -239,11 +239,29 @@ enum Screen {
     Effects,
 }
 
-// プロンプトで補完候補に出すコマンド一覧（ここに足すと補完に出る）。
-const COMMANDS: &[&str] = &["effect", "help", "clear", "quit"];
+// シェルモードを表す入力の接頭辞。
+const SHELL_PREFIX: char = '!';
 
 // 出力履歴の保持上限（古い行は捨てる）。
 const MAX_OUTPUT: usize = 500;
+
+// 補完ポップアップに一度に出す候補の最大数。
+const MAX_SUGGESTIONS: usize = 6;
+
+// プロンプトのコマンド定義。MODES と同じく、ここに1行足すだけで
+// 補完・ヘルプ・実行のすべてに反映される（コマンドの単一の真実）。
+struct CmdSpec {
+    name: &'static str,
+    help: &'static str,
+    run: fn(&mut App),
+}
+
+const COMMANDS: &[CmdSpec] = &[
+    CmdSpec { name: "effect", help: "エフェクト画面を開く", run: App::cmd_effect },
+    CmdSpec { name: "help", help: "コマンド一覧を表示", run: App::cmd_help },
+    CmdSpec { name: "clear", help: "出力を消去", run: App::cmd_clear },
+    CmdSpec { name: "quit", help: "終了（Esc でも可）", run: App::cmd_quit },
+];
 
 // ─── App 構造体 ───────────────────────────────────────────────
 struct App {
@@ -353,17 +371,17 @@ impl App {
     // "!" 始まりはシェルモードなのでコマンド補完はしない。
     // 空入力のときは全コマンドを候補に出す（デフォルトで一覧が見える）。
     fn matches(&self) -> Vec<&'static str> {
-        let inp = self.input.trim();
-        if inp.starts_with('!') {
+        if self.is_shell_mode() {
             return Vec::new();
         }
+        let inp = self.input.trim();
         if inp.is_empty() {
-            return COMMANDS.to_vec();
+            return COMMANDS.iter().map(|c| c.name).collect();
         }
         let ms: Vec<&'static str> = COMMANDS
             .iter()
-            .filter(|c| c.starts_with(inp))
-            .copied()
+            .map(|c| c.name)
+            .filter(|name| name.starts_with(inp))
             .collect();
         // 入力とぴったり一致する1件だけなら、候補表示は不要。
         if ms.len() == 1 && ms[0] == inp {
@@ -372,20 +390,17 @@ impl App {
         ms
     }
 
-    // "!" で始まっていればシェルモード。
+    // SHELL_PREFIX で始まっていればシェルモード。
     fn is_shell_mode(&self) -> bool {
-        self.input.starts_with('!')
+        self.input.starts_with(SHELL_PREFIX)
     }
 
     // 選択中の補完候補を入力欄に採用する。採用したら true。
     // 候補が無い（確定済み or シェルモード）なら false。
+    // sugg_idx は入力編集のたびに 0 に戻し、Down では候補数内に収めているので、
+    // 常に範囲内。get が None を返すのは候補が無いときだけ。
     fn accept_suggestion(&mut self) -> bool {
-        let matches = self.matches();
-        let pick = matches
-            .get(self.sugg_idx)
-            .or_else(|| matches.first())
-            .copied();
-        if let Some(cmd) = pick {
+        if let Some(&cmd) = self.matches().get(self.sugg_idx) {
             self.input = cmd.to_string();
             self.sugg_idx = 0;
             true
@@ -404,31 +419,38 @@ impl App {
         }
         self.push_output(format!("> {line}"));
 
-        if let Some(cmd) = line.strip_prefix('!') {
+        if let Some(cmd) = line.strip_prefix(SHELL_PREFIX) {
             self.run_shell(cmd.trim());
-        } else {
-            match line.as_str() {
-                "effect" | "effects" => {
-                    self.screen = Screen::Effects;
-                    self.cursor = 0;
-                    self.phase = 0.0;
-                }
-                "clear" => self.output.clear(),
-                "help" => {
-                    self.push_output("  effect    エフェクト画面を開く".to_string());
-                    self.push_output("  !<cmd>    シェルコマンドを実行（例: !ls -la）".to_string());
-                    self.push_output("  clear     出力を消去".to_string());
-                    self.push_output("  quit      終了（Esc でも可）".to_string());
-                    self.push_output("  Tab       補完 / ↑↓ で候補選択".to_string());
-                }
-                "quit" | "exit" => self.quitting = true,
-                other => {
-                    self.push_output(format!(
-                        "unknown command: {other}  ('effect' / 'help' / '!<cmd>')"
-                    ));
-                }
-            }
+            return;
         }
+        // コマンド表から探して実行。無ければ unknown。
+        match COMMANDS.iter().find(|c| c.name == line) {
+            Some(cmd) => (cmd.run)(self),
+            None => self.push_output(format!("unknown command: {line}  ('help' でコマンド一覧)")),
+        }
+    }
+
+    // ─── コマンドの実体（COMMANDS テーブルから呼ばれる）──────────
+    fn cmd_effect(&mut self) {
+        self.screen = Screen::Effects;
+        self.cursor = 0;
+        self.phase = 0.0;
+    }
+
+    fn cmd_clear(&mut self) {
+        self.output.clear();
+    }
+
+    fn cmd_quit(&mut self) {
+        self.quitting = true;
+    }
+
+    fn cmd_help(&mut self) {
+        for c in COMMANDS {
+            self.push_output(format!("  {:<8}{}", c.name, c.help));
+        }
+        self.push_output(format!("  {:<8}{}", "!<cmd>", "シェルを実行（例: !ls -la）"));
+        self.push_output(format!("  {:<8}{}", "Tab", "補完 / ↑↓ で候補選択"));
     }
 
     // シェルを実行して標準出力・標準エラーを履歴へ取り込む。
@@ -508,8 +530,8 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::raw(" "));
-            // "!" を除いた中身を黄色で表示。
-            let body = self.input.strip_prefix('!').unwrap_or(&self.input);
+            // 接頭辞を除いた中身を黄色で表示。
+            let body = self.input.strip_prefix(SHELL_PREFIX).unwrap_or(&self.input);
             spans.push(Span::styled(body.to_string(), Style::default().fg(Color::Yellow)));
         } else {
             spans.push(Span::styled(
@@ -545,7 +567,7 @@ impl App {
         // 補完候補ポップアップ（入力行の真上に重ねる）
         let matches = self.matches();
         if !matches.is_empty() {
-            let n = matches.len().min(6) as u16;
+            let n = matches.len().min(MAX_SUGGESTIONS) as u16;
             let top = input_y.saturating_sub(n);
             let pop_w = matches
                 .iter()
