@@ -102,12 +102,11 @@ impl App {
     fn handle_prompt_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Esc => self.quitting = true,
-            // Enter: 補完候補が出ていればまず選択中の候補を入力に採用し、
-            // 候補がなければ（＝確定済み or シェル）実行する。
+            // Enter: 選択中の補完候補があれば採用してから、そのまま実行する。
+            // （Tab は採用だけ、Enter は即実行、という分担）
             KeyCode::Enter => {
-                if !self.accept_suggestion() {
-                    self.submit();
-                }
+                self.accept_suggestion();
+                self.submit();
             }
             KeyCode::Backspace => {
                 self.input.pop();
@@ -310,7 +309,7 @@ impl App {
 
         // ヘルプ行
         frame.render_widget(
-            Paragraph::new("Enter 採用/実行   Tab 補完   ↑↓ 候補   !<cmd> シェル   Esc 終了")
+            Paragraph::new("Enter 実行   Tab 補完   ↑↓ 候補   !<cmd> シェル   Esc 終了")
                 .style(Style::default().fg(Color::DarkGray)),
             Rect::new(0, h - 1, w, 1),
         );
