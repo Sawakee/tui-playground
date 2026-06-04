@@ -7,7 +7,7 @@
 use crate::App;
 
 mod clear;
-pub mod effect; // エフェクト機能（Effects 型）も持つので main から見えるよう pub
+mod effect;
 mod help;
 mod quit;
 

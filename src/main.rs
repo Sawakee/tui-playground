@@ -1,9 +1,9 @@
 // ウェーブ TUI 🌊
 // Claude Code のように、まずプロンプトで文字を入力する。
-//   - "effect" でエフェクト画面（commands/ と effects モジュール）
-//   - "!<cmd>" でシェル実行
-// main.rs はアプリの外枠（プロンプト・画面遷移・メインループ）だけを持ち、
-// 機能の実体は commands/ と effects に分かれている。
+//   - "effect" でエフェクト画面、"!<cmd>" でシェル実行
+// main.rs はアプリの外枠（プロンプト・メインループ）と、画面の汎用的な
+// インターフェース（Screen トレイト）だけを持つ。具体的な画面（エフェクトなど）は
+// commands/ 側にあり、コマンドが Box<dyn Screen> を渡して開く。main は中身を知らない。
 
 use std::{
     io,
@@ -21,8 +21,6 @@ use ratatui::{
 };
 
 mod commands;
-// エフェクト機能は commands/effect.rs（effect コマンドと同じファイル）にある。
-use commands::effect;
 
 // ─── 定数 ────────────────────────────────────────────────────
 const FPS: u64 = 30;
@@ -43,60 +41,71 @@ const MAX_SUGGESTIONS: usize = 6;
 // コマンドは commands/ 以下に「1コマンド1ファイル」で定義する。
 // commands::REGISTRY が登録済み一覧（補完・ヘルプ・実行の単一の真実）。
 
-// ─── 画面の状態 ──────────────────────────────────────────────
-enum Screen {
-    Prompt,
-    Effects,
+// ─── 画面（オーバーレイ）のインターフェース ──────────────────
+// 全画面の機能（エフェクト画面など）はこのトレイトを実装する。
+// App はこれ越しに「いま開いている画面」を駆動するだけで、
+// 中身が何の画面かは知らない。新しい画面はコマンドが Box<dyn Screen> を
+// 渡すだけで追加でき、main の変更は不要（＝スケーラブル）。
+pub trait Screen {
+    fn update(&mut self); // 毎フレームの更新（アニメなど）
+    fn handle_key(&mut self, code: KeyCode) -> Transition;
+    fn render(&self, frame: &mut Frame);
+}
+
+// 画面からの遷移要求。
+pub enum Transition {
+    Stay, // この画面を続ける
+    Exit, // 閉じてプロンプトへ戻る
+    Quit, // アプリ終了
 }
 
 // ─── App 構造体 ───────────────────────────────────────────────
 struct App {
-    screen: Screen,
-    input: String,            // プロンプトの入力中文字列
-    output: Vec<String>,      // 画面に出す履歴（投稿コマンドやシェル出力）
-    sugg_idx: usize,          // 補完候補のうち選択中のインデックス
-    phase: f64,              // プロンプトのカーソル点滅用の位相
-    effects: effect::Effects, // エフェクト画面（状態・描画は commands/effect.rs）
+    input: String,                   // プロンプトの入力中文字列
+    output: Vec<String>,             // 画面に出す履歴（投稿コマンドやシェル出力）
+    sugg_idx: usize,                 // 補完候補のうち選択中のインデックス
+    phase: f64,                      // プロンプトのカーソル点滅用の位相
+    screen: Option<Box<dyn Screen>>, // 開いている全画面（None = プロンプト）
     quitting: bool,
 }
 
 impl App {
     fn new() -> Self {
         Self {
-            screen: Screen::Prompt,
             input: String::new(),
             // 起動時の出力は空。使い方は help コマンドで見られる。
             output: Vec::new(),
             sugg_idx: 0,
             phase: 0.0,
-            effects: effect::Effects::new(),
+            screen: None,
             quitting: false,
         }
     }
 
     fn update(&mut self) {
         self.phase += PHASE_SPEED; // カーソル点滅
-        if let Screen::Effects = self.screen {
-            self.effects.tick(); // 表示中だけアニメを進める
+        if let Some(screen) = self.screen.as_mut() {
+            screen.update(); // 表示中の画面だけ進める
         }
     }
 
-    // ─── キー処理（画面ごとに振り分け）────────────────────────
+    // ─── キー処理 ────────────────────────────────────────────
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        // Ctrl-C はどの画面でも終了。
+        // Ctrl-C はどこでも終了。
         if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
             self.quitting = true;
             return;
         }
-        match self.screen {
-            Screen::Prompt => self.handle_prompt_key(code),
-            // エフェクト画面のキー処理はモジュールに委譲し、遷移だけ受け取る。
-            Screen::Effects => match self.effects.handle_key(code) {
-                effect::Nav::Exit => self.screen = Screen::Prompt,
-                effect::Nav::Quit => self.quitting = true,
-                effect::Nav::Stay => {}
-            },
+        // 全画面が開いていればそこへ委譲し、遷移要求だけ受け取る。
+        if let Some(screen) = self.screen.as_mut() {
+            match screen.handle_key(code) {
+                Transition::Exit => self.screen = None,
+                Transition::Quit => self.quitting = true,
+                Transition::Stay => {}
+            }
+            return;
         }
+        self.handle_prompt_key(code);
     }
 
     fn handle_prompt_key(&mut self, code: KeyCode) {
@@ -203,10 +212,9 @@ impl App {
     // ─── コマンド向けの操作 API（commands/* から呼ばれる）───────
     // コマンドは「何をしたいか」だけを呼び、フィールドの動かし方は App が持つ。
 
-    // エフェクト画面を開く（最初から再生されるよう effects 側を初期化）。
-    fn open_effects(&mut self) {
-        self.effects.reset();
-        self.screen = Screen::Effects;
+    // 全画面を開く。App は中身の型を知らず、ただ保持して駆動する。
+    fn open_screen(&mut self, screen: Box<dyn Screen>) {
+        self.screen = Some(screen);
     }
 
     fn clear_output(&mut self) {
@@ -247,11 +255,11 @@ impl App {
         }
     }
 
-    // ─── 描画（画面ごとに振り分け）────────────────────────────
+    // ─── 描画 ────────────────────────────────────────────────
     fn render(&mut self, frame: &mut Frame) {
-        match self.screen {
-            Screen::Prompt => self.render_prompt(frame),
-            Screen::Effects => self.effects.render(frame),
+        match self.screen.as_ref() {
+            Some(screen) => screen.render(frame),
+            None => self.render_prompt(frame),
         }
     }
 

@@ -5,7 +5,7 @@
 // main.rs はこの `Effects` を保持し、画面遷移だけを担当する。
 
 use super::Command;
-use crate::App;
+use crate::{App, Screen, Transition};
 
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -29,7 +29,8 @@ impl Command for Cmd {
     }
 
     fn run(&self, app: &mut App) {
-        app.open_effects();
+        // エフェクト画面を全画面として開く。App は中身の型を知らない。
+        app.open_screen(Box::new(Effects::new()));
     }
 }
 
@@ -54,58 +55,48 @@ const MODES: &[Mode] = &[
 ];
 
 // ─── 画面コントローラ ────────────────────────────────────────
-// エフェクト画面の状態（選択中モードとアニメ位相）と振る舞いを持つ。
-pub struct Effects {
+// エフェクト画面の状態（選択中モードとアニメ位相）を持ち、Screen を実装する。
+struct Effects {
     cursor: usize,
     phase: f64,
 }
 
-// キー処理の結果。画面遷移の判断は呼び出し元（App）に返す。
-pub enum Nav {
-    Stay, // この画面に留まる
-    Exit, // プロンプトへ戻る
-    Quit, // アプリ終了
-}
-
 impl Effects {
-    pub fn new() -> Self {
+    // 開いた瞬間から最初のエフェクトが先頭再生されるよう初期化。
+    fn new() -> Self {
         Self { cursor: 0, phase: 0.0 }
     }
+}
 
-    // 画面を開くときに呼ぶ。最初のエフェクトを先頭から再生する。
-    pub fn reset(&mut self) {
-        self.cursor = 0;
-        self.phase = 0.0;
-    }
-
+impl Screen for Effects {
     // 毎フレームのアニメ更新。
-    pub fn tick(&mut self) {
+    fn update(&mut self) {
         self.phase += PHASE_SPEED;
     }
 
-    pub fn handle_key(&mut self, code: KeyCode) -> Nav {
+    fn handle_key(&mut self, code: KeyCode) -> Transition {
         match code {
-            KeyCode::Esc => Nav::Exit,
-            KeyCode::Char('q') => Nav::Quit,
+            KeyCode::Esc => Transition::Exit,
+            KeyCode::Char('q') => Transition::Quit,
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                     self.phase = 0.0; // 選択先のエフェクトを最初から再生
                 }
-                Nav::Stay
+                Transition::Stay
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.cursor < MODES.len().saturating_sub(1) {
                     self.cursor += 1;
                     self.phase = 0.0;
                 }
-                Nav::Stay
+                Transition::Stay
             }
-            _ => Nav::Stay,
+            _ => Transition::Stay,
         }
     }
 
-    pub fn render(&self, frame: &mut Frame) {
+    fn render(&self, frame: &mut Frame) {
         let area = frame.area();
         let w = area.width;
         let h = area.height;
@@ -130,7 +121,10 @@ impl Effects {
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(help, Rect::new(0, h.saturating_sub(1), w, 1));
     }
+}
 
+// 描画ヘルパ（Screen トレイト外の内部メソッド）。
+impl Effects {
     // 描画コンテキストを組み立てる（中心座標と最大半径）。
     fn make_ctx(&self, w: u16, h: u16, center_row: u16) -> Ctx {
         let cx = w as f64 / 2.0 - 0.5;

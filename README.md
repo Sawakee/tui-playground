@@ -64,16 +64,19 @@ src/
     help.rs / clear.rs / quit.rs / mod.rs
 ```
 
-`main.rs` はエフェクトのロジックを持たず、`commands::effect::Effects` を保持して
-画面遷移だけを行う（キー処理の結果は `Nav` enum で受け取る）。
+`main.rs` は具体的な画面を知らない。汎用の **`Screen` トレイト**
+（`update()` / `handle_key() -> Transition` / `render()`）だけを定義し、
+`Option<Box<dyn Screen>>` として「いま開いている画面」を駆動する。
+画面を開きたいコマンドが `app.open_screen(Box::new(...))` で `Box<dyn Screen>` を
+渡すだけでよく、main の変更は不要（＝画面を増やしてもスケーラブル）。
 
 ## エフェクト（`src/commands/effect.rs`）
 
 effect コマンドとエフェクト機能は同じファイルにまとまっている。
 
-- **`Cmd`** … `effect` コマンド本体（`app.open_effects()` を呼ぶ）
-- **`Effects`** … エフェクト画面のコントローラ。状態（選択中モード・位相）と
-  `handle_key()` / `render()` / `reset()` / `tick()` を持つ
+- **`Cmd`** … `effect` コマンド本体（`app.open_screen(Box::new(Effects::new()))`）
+- **`Effects`** … エフェクト画面。`impl Screen` で `update` / `handle_key` / `render` を提供
+  （状態は選択中モードと位相）
 - **`Effect` トレイト** … `render(&self, canvas, ctx)` でキャンバスへ描く責務
 - **`Canvas`** … 文字セルの2次元バッファ。`set(x, y, ch, color)` で書き込み、最後に一括描画
 - **`Ctx`** … 中心座標・最大半径＋極座標変換 `polar()` / 距離計算 `radius_at()`
